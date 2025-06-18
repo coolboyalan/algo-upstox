@@ -75,7 +75,11 @@ export default async function downloadAndExtract() {
  * @param {string} optionType - The type of option ('PE' for Put, 'CE' for Call).
  * @returns {Promise<Object|null>} A promise that resolves with the instrument or null if not found.
  */
-async function findImmediateOption(assetSymbol, strikePrice, optionType) {
+export async function findImmediateOption(
+  assetSymbol,
+  strikePrice,
+  optionType,
+) {
   try {
     // This function now reads the data file itself.
     const data = await fs.readFile(OUTPUT_PATH, "utf8");
@@ -98,7 +102,7 @@ async function findImmediateOption(assetSymbol, strikePrice, optionType) {
       current.expiry < earliest.expiry ? current : earliest,
     );
 
-    return console.log(instrument);
+    return instrument;
   } catch (err) {
     console.error(
       "Error reading or parsing instrument data inside findImmediateOption:",
@@ -113,7 +117,7 @@ async function findImmediateOption(assetSymbol, strikePrice, optionType) {
  * Main function to run the script.
  * It ensures the data file exists (downloads if not), then prompts for user input.
  */
-async function main() {
+export async function main() {
   try {
     // 1. Caching: Check if the file exists. If not, download it.
     try {

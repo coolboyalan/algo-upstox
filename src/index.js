@@ -1,14 +1,22 @@
 import cron from "node-cron";
+import express from "express";
 import axios from "axios";
 import { getISTMidnightFakeUTCString } from "#utils/dayChecker";
 import sequelize from "#configs/database";
+import { main, findImmediateOption } from "#utils/assetChecker";
+import BrokerKey from "#models/brokerKey";
+import Broker from "#models/broker";
 
 await sequelize.authenticate();
+
+await main();
 
 let dailyAsset = null;
 let keys = null;
 let adminKeys = null;
 let dailyLevels = null;
+
+const server = express();
 
 const dayMap = {
   1: "Monday",
@@ -43,8 +51,8 @@ cron.schedule("* * * * * *", async () => {
   const second = istNow.getSeconds();
 
   const preRange =
-    (istHour === 7 && istMinute >= 30) ||
-    (istHour > 7 && istHour < 15) ||
+    (istHour === 8 && istMinute >= 30) ||
+    (istHour > 8 && istHour < 15) ||
     (istHour === 15 && istMinute <= 30);
 
   const isInMarketRange =
@@ -80,12 +88,19 @@ cron.schedule("* * * * * *", async () => {
       }
 
       if (!keys || !adminKeys || (istMinute % 1 === 0 && second % 40 === 0)) {
-        const [responseKeys] = await sequelize.query(
-          `SELECT * FROM "BrokerKeys"
-         INNER JOIN "Brokers" ON "BrokerKeys"."brokerId" = "Brokers"."id"
-         WHERE "Brokers"."name" = 'Upstox' AND "BrokerKeys"."status" = true`,
-        );
-
+        const responseKeys = await BrokerKey.findAll({
+          include: [
+            {
+              model: Broker,
+              where: {
+                name: "Upstox",
+              },
+            },
+          ],
+          where: {
+            status: true,
+          },
+        });
         const [admin] = await sequelize.query(
           `SELECT * FROM "BrokerKeys"
          INNER JOIN "Users" ON "BrokerKeys"."userId" = "Users"."id"
@@ -142,7 +157,7 @@ cron.schedule("* * * * * *", async () => {
       let reason = "Price is in a neutral zone.";
       let direction;
       let assetPrice;
-      let lastTrade = TradeService.lastTrade;
+      let lastTrade;
 
       if (price % 100 > 50) {
         assetPrice = parseInt(price / 100) * 100 + 100;
@@ -163,8 +178,7 @@ cron.schedule("* * * * * *", async () => {
         reason = "Price is below BC within buffer.";
       }
       // If price is between TC and BC, No Action
-      else if (price < tc && price > bc && lastTrade) {
-        direction = lastTrade;
+      else if (price < tc && price > bc) {
         signal = "Exit";
         reason = "Price is within CPR range.";
       }
@@ -186,55 +200,289 @@ cron.schedule("* * * * * *", async () => {
       const innerLevelMap = { r1, r2, r3, r4, s1, s2, s3, s4, tc, bc };
 
       Object.entries(innerLevelMap).find(([levelName, level]) => {
-        if (signal === "No Action" && lastTrade) {
-          if (lastTrade === "PE") {
-            if (data.close > level && data.open < level) {
-              signal = "Exit";
-              reason = `Price crossed the level ${levelName}`;
-              return true;
-            }
-          } else {
-            if (data.close < level && data.open > level) {
-              signal = "Exit";
-              reason = `Price crossed the level ${levelName}`;
-              return true;
-            }
+        if (signal === "No Action") {
+          if (data.close > level && data.open < level) {
+            signal = "PE Exit";
+            reason = `Price crossed the level ${levelName}`;
+            return true;
+          }
+          if (data.close < level && data.open > level) {
+            signal = "CE Exit";
+            reason = `Price crossed the level ${levelName}`;
+            return true;
           }
         }
       });
 
-      if (signal === "No Action") {
-        return;
+      let symbol;
+      if (direction) {
+        symbol = await findImmediateOption(
+          dailyAsset.name,
+          assetPrice,
+          direction,
+        );
       }
 
-      if (signal === "Exit") {
-        await exitOrder(lastTrade.asset);
-        TradeService.lastTrade = null;
+      for (const key of keys) {
+        const getLTP = async (instrumentkey, accesstoken = key.token) => {
+          try {
+            const res = await axios.get(
+              "https://api.upstox.com/v2/market-quote/ltp",
+              {
+                headers: {
+                  Authorization: `Bearer ${accesstoken}`,
+                  Accept: "application/json",
+                },
+                params: {
+                  instrument_key: instrumentkey, // e.g., 'NSE_EQ:NHPC'
+                },
+              },
+            );
 
-        //NOTE: Add a exit db entry
-        return;
-      }
+            const ltp = Object.values(res.data.data)[0]?.last_price;
 
-      const symbol = getSpecificCachedOption(
-        TradeService.dailyAsset,
-        assetPrice,
-        direction,
-      );
+            return ltp;
+          } catch (err) {
+            console.error(
+              "❌ error fetching ltp:",
+              err.response?.data || err.message,
+            );
+            throw err;
+          }
+        };
+        const getInitialDayBalance = async () => {
+          try {
+            const res = await axios.get(
+              "https://api.upstox.com/v2/user/get-funds-and-margin",
+              {
+                headers: {
+                  Authorization: `Bearer ${key.token}`, // key.token = access_token
+                  Accept: "application/json",
+                },
+              },
+            );
 
-      if (lastTrade) {
-        if (direction === lastTrade.direction) return;
-        await exitOrder(lastTrade.asset);
-        // NOTE: Add exit entry in db
+            const openingBalance = res.data.data.equity.available_margin;
+            return openingBalance;
+          } catch (err) {
+            console.error(
+              "❌ Error fetching initial day balance:",
+              err.response?.data || err.message,
+            );
+            throw err;
+          }
+        };
 
-        await newOrder(symbol);
-        //NOTE: Add new entry in db
+        const getTodaysPnL = async (accessToken = key.token) => {
+          try {
+            const response = await axios.get(
+              "https://api.upstox.com/v2/portfolio/short-term-positions",
+              {
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  Accept: "application/json",
+                },
+              },
+            );
 
-        lastTrade = direction; //NOTE: Assign new trade here
-        lastAsset = symbol;
-      } else {
-        await newOrder(symbol);
-        lastAsset = symbol;
-        lastTrade = direction;
+            const positions = response.data.data;
+
+            let totalRealised = 0;
+            let totalUnrealised = 0;
+
+            for (const pos of positions) {
+              if (pos.product === "I") {
+                totalRealised += Number(pos.realised || 0);
+                totalUnrealised += Number(pos.unrealised || 0);
+              }
+            }
+
+            const totalPnL = totalRealised + totalUnrealised;
+
+            return totalPnL;
+          } catch (error) {
+            console.error(
+              "❌ Failed to fetch today's intraday PnL:",
+              error.response?.data || error.message,
+            );
+            throw error;
+          }
+        };
+        const balance = await getInitialDayBalance();
+        const usableFunds = (balance / 100) * 40;
+        let ltp;
+        let noOfLots;
+
+        if (direction) {
+          ltp = await getLTP(symbol.instrument_key);
+          noOfLots = Math.floor(usableFunds / (ltp * symbol.lot_size));
+        }
+
+        const pnl = await getTodaysPnL();
+
+        const maxLoss = usableFunds / 4;
+        const maxProfit = usableFunds / 2;
+
+        const placeIntradayOrder = async ({
+          instrument_key,
+          transaction_type = "BUY",
+          quantity = 1,
+          accessToken = key.token,
+        }) => {
+          try {
+            const orderData = {
+              product: "I",
+              validity: "DAY",
+              price: 0,
+              tag: "",
+              order_type: "MARKET",
+              transaction_type,
+              disclosed_quantity: 0,
+              trigger_price: 0,
+              is_amo: false,
+              quantity,
+              instrument_token: instrument_key,
+            };
+
+            const response = await axios.post(
+              "https://api.upstox.com/v2/order/place",
+              orderData,
+              {
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  Accept: "application/json",
+                  "Content-Type": "application/json",
+                },
+              },
+            );
+
+            console.log("✅ Order placed:", response.data);
+            return response.data;
+          } catch (err) {
+            console.error("❌ Order error:", err.response?.data || err.message);
+            throw err;
+          }
+        };
+
+        // 🔹 Wrapper to place a BUY order
+        const newOrder = async (data) => {
+          data.transaction_type = "BUY";
+          return await placeIntradayOrder(data);
+        };
+
+        // 🔹 Wrapper to place a SELL order
+        const exitOrder = async (data) => {
+          data.transaction_type = "SELL";
+          return await placeIntradayOrder(data);
+        };
+
+        const lastTrade = await TradeLog.findDoc(
+          { brokerKeyId: key.id, type: "entry" },
+          { allowNull: true },
+        );
+
+        if (pnl + maxLoss <= 0 || pnl >= maxProfit) {
+          if (!lastTrade) {
+            key.status = false;
+            await key.save();
+            continue;
+          }
+          const exitOrderData = {
+            instrument_key: lastTrade.asset,
+            quantity: lastTrade.quantity,
+          };
+
+          await exitOrder(exitOrderData);
+          lastTrade.type = "exit";
+          await lastTrade.save();
+          key.status = false;
+          await key.save();
+          continue;
+        }
+
+        if (signal === "No Action") {
+          continue;
+        }
+
+        if (signal === "Exit" || signal === "PE Exit" || signal === "CE Exit") {
+          if (!lastTrade) continue;
+
+          const exitOrderData = {
+            instrument_key: lastTrade.asset,
+            quantity: lastTrade.quantity,
+          };
+
+          if (signal === "PE Exit") {
+            if (lastTrade.direction === "PE") {
+              await exitOrder(exitOrderData);
+              lastTrade.type = "exit";
+              await lastTrade.save();
+              continue;
+            }
+            continue;
+          } else if (signal === "CE Exit") {
+            if (lastTrade.direction === "CE") {
+              await exitOrder(exitOrderData);
+              lastTrade.type = "exit";
+              await lastTrade.save();
+              continue;
+            }
+            continue;
+          }
+
+          if (signal === "Exit") {
+            await exitOrder(exitOrderData);
+            lastTrade.type = "exit";
+            await lastTrade.save();
+            continue;
+          }
+        }
+
+        if (lastTrade) {
+          if (lastTrade.direction === direction) continue;
+          const exitOrderData = {
+            instrument_key: lastTrade.asset,
+            quantity: lastTrade.quantity,
+          };
+          await exitOrder(exitOrderData);
+          lastTrade.type = "exit";
+          await lastTrade.save();
+          const newOrderData = {
+            instrument_key: symbol.instrument_key,
+            quantity: noOfLots * symbol.lot_size,
+          };
+          const newTradeLog = {
+            brokerId: key.brokerId,
+            brokerKeyId: key.id,
+            userId: key.userId,
+            baseAssetId: dailyAsset.id,
+            asset: symbol.instrument_key,
+            direction,
+            quantity: newOrderData.quantity,
+            type: "entry",
+          };
+
+          await newOrder(newOrderData);
+          await TradeLog.create(newTradeLog);
+        } else {
+          const newOrderData = {
+            instrument_key: symbol.instrument_key,
+            quantity: noOfLots * symbol.lot_size,
+          };
+          const newTradeLog = {
+            brokerId: key.brokerId,
+            brokerKeyId: key.id,
+            userId: key.userId,
+            baseAssetId: dailyAsset.id,
+            asset: symbol.instrument_key,
+            direction,
+            quantity: newOrderData.quantity,
+            type: "entry",
+          };
+
+          await newOrder(newOrderData);
+          await TradeLog.create(newTradeLog);
+        }
       }
     }
   } catch (e) {
@@ -249,3 +497,5 @@ cron.schedule("* * * * * *", async () => {
     }
   }
 });
+
+server.listen(3003);
