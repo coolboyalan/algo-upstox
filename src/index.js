@@ -6,6 +6,7 @@ import sequelize from "#configs/database";
 import { main, findImmediateOption } from "#utils/assetChecker";
 import BrokerKey from "#models/brokerKey";
 import Broker from "#models/broker";
+import TradeLog from "#models/tradeLog";
 
 await sequelize.authenticate();
 
@@ -75,7 +76,7 @@ cron.schedule("* * * * * *", async () => {
       if (!dailyAsset) {
         const day = dayMap[istNow.getDay()];
         const [response] = await sequelize.query(
-          `SELECT "name", "zerodhaToken" FROM "DailyAssets"
+          `SELECT "name", "zerodhaToken","Assets"."id" FROM "DailyAssets"
            INNER JOIN "Assets" ON "DailyAssets"."assetId" = "Assets"."id"
            WHERE "day" = '${day}'`,
         );
@@ -308,8 +309,8 @@ cron.schedule("* * * * * *", async () => {
             throw error;
           }
         };
-        const balance = await getInitialDayBalance();
-        const usableFunds = (balance / 100) * 40;
+        const balance = Number(key.balance);
+        const usableFunds = (balance / 100) * 25;
         let ltp;
         let noOfLots;
 
@@ -320,8 +321,8 @@ cron.schedule("* * * * * *", async () => {
 
         const pnl = await getTodaysPnL();
 
-        const maxLoss = usableFunds / 4;
-        const maxProfit = usableFunds / 2;
+        const maxLoss = balance / 10;
+        const maxProfit = (balance / 10) * 1.5;
 
         const placeIntradayOrder = async ({
           instrument_key,
@@ -461,7 +462,6 @@ cron.schedule("* * * * * *", async () => {
             quantity: newOrderData.quantity,
             type: "entry",
           };
-
           await newOrder(newOrderData);
           await TradeLog.create(newTradeLog);
         } else {
