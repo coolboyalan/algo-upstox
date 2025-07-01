@@ -8,7 +8,14 @@ import BrokerKey from "#models/brokerKey";
 import Broker from "#models/broker";
 import TradeLog from "#models/tradeLog";
 
+try{
+	
 await sequelize.authenticate();
+	console.log("connected");
+}catch(e){
+	console.log("Cannot connect")
+	process.exit();
+}
 
 await main();
 
