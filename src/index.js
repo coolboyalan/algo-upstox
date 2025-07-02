@@ -8,13 +8,12 @@ import BrokerKey from "#models/brokerKey";
 import Broker from "#models/broker";
 import TradeLog from "#models/tradeLog";
 
-try{
-	
-await sequelize.authenticate();
-	console.log("connected");
-}catch(e){
-	console.log("Cannot connect")
-	process.exit();
+try {
+  await sequelize.authenticate();
+  console.log("connected");
+} catch (e) {
+  console.log("Cannot connect");
+  process.exit();
 }
 
 await main();
@@ -317,7 +316,7 @@ cron.schedule("* * * * * *", async () => {
           }
         };
         const balance = Number(key.balance);
-        const usableFunds = (balance / 100) * 25;
+        const usableFunds = (balance / 100) * 40;
         let ltp;
         let noOfLots;
 
