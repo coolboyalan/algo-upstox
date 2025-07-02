@@ -316,7 +316,7 @@ cron.schedule("* * * * * *", async () => {
           }
         };
         const balance = Number(key.balance);
-        const usableFunds = (balance / 100) * 40;
+        const usableFunds = (balance / 100) * 25;
         let ltp;
         let noOfLots;
 
