@@ -231,263 +231,306 @@ cron.schedule("* * * * * *", async () => {
       }
 
       for (const key of keys) {
-        const getLTP = async (instrumentkey, accesstoken = key.token) => {
-          try {
-            const res = await axios.get(
-              "https://api.upstox.com/v2/market-quote/ltp",
-              {
-                headers: {
-                  Authorization: `Bearer ${accesstoken}`,
-                  Accept: "application/json",
+        try {
+          console.log(istNow);
+          const getLTP = async (instrumentkey, accesstoken = key.token) => {
+            try {
+              const res = await axios.get(
+                "https://api.upstox.com/v2/market-quote/ltp",
+                {
+                  headers: {
+                    Authorization: `Bearer ${accesstoken}`,
+                    Accept: "application/json",
+                  },
+                  params: {
+                    instrument_key: instrumentkey, // e.g., 'NSE_EQ:NHPC'
+                  },
                 },
-                params: {
-                  instrument_key: instrumentkey, // e.g., 'NSE_EQ:NHPC'
-                },
-              },
-            );
+              );
 
-            const ltp = Object.values(res.data.data)[0]?.last_price;
+              const ltp = Object.values(res.data.data)[0]?.last_price;
 
-            return ltp;
-          } catch (err) {
-            console.error(
-              "❌ error fetching ltp:",
-              err.response?.data || err.message,
-            );
-            throw err;
-          }
-        };
-        const getInitialDayBalance = async () => {
-          try {
-            const res = await axios.get(
-              "https://api.upstox.com/v2/user/get-funds-and-margin",
-              {
-                headers: {
-                  Authorization: `Bearer ${key.token}`, // key.token = access_token
-                  Accept: "application/json",
-                },
-              },
-            );
-
-            const openingBalance = res.data.data.equity.available_margin;
-            return openingBalance;
-          } catch (err) {
-            console.error(
-              "❌ Error fetching initial day balance:",
-              err.response?.data || err.message,
-            );
-            throw err;
-          }
-        };
-
-        const getTodaysPnL = async (accessToken = key.token) => {
-          try {
-            const response = await axios.get(
-              "https://api.upstox.com/v2/portfolio/short-term-positions",
-              {
-                headers: {
-                  Authorization: `Bearer ${accessToken}`,
-                  Accept: "application/json",
-                },
-              },
-            );
-
-            const positions = response.data.data;
-
-            let totalRealised = 0;
-            let totalUnrealised = 0;
-
-            for (const pos of positions) {
-              if (pos.product === "I") {
-                totalRealised += Number(pos.realised || 0);
-                totalUnrealised += Number(pos.unrealised || 0);
-              }
+              return ltp;
+            } catch (err) {
+              console.error(
+                "❌ error fetching ltp:",
+                err.response?.data || err.message,
+              );
+              throw err;
             }
+          };
+          const getInitialDayBalance = async () => {
+            try {
+              const res = await axios.get(
+                "https://api.upstox.com/v2/user/get-funds-and-margin",
+                {
+                  headers: {
+                    Authorization: `Bearer ${key.token}`, // key.token = access_token
+                    Accept: "application/json",
+                  },
+                },
+              );
 
-            const totalPnL = totalRealised + totalUnrealised;
+              const openingBalance = res.data.data.equity.available_margin;
+              return openingBalance;
+            } catch (err) {
+              console.error(
+                "❌ Error fetching initial day balance:",
+                err.response?.data || err.message,
+              );
+              throw err;
+            }
+          };
 
-            return totalPnL;
-          } catch (error) {
-            console.error(
-              "❌ Failed to fetch today's intraday PnL:",
-              error.response?.data || error.message,
-            );
-            throw error;
+          const getTodaysPnL = async (accessToken = key.token) => {
+            try {
+              const response = await axios.get(
+                "https://api.upstox.com/v2/portfolio/short-term-positions",
+                {
+                  headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    Accept: "application/json",
+                  },
+                },
+              );
+
+              const positions = response.data.data;
+
+              let totalRealised = 0;
+              let totalUnrealised = 0;
+
+              for (const pos of positions) {
+                if (pos.product === "I") {
+                  totalRealised += Number(pos.realised || 0);
+                  totalUnrealised += Number(pos.unrealised || 0);
+                }
+              }
+
+              const totalPnL = totalRealised + totalUnrealised;
+
+              return totalPnL;
+            } catch (error) {
+              console.error(
+                "❌ Failed to fetch today's intraday PnL:",
+                error.response?.data || error.message,
+              );
+              throw error;
+            }
+          };
+          const balance = Number(key.balance);
+          const usableFunds = (balance / 100) * 45;
+          let ltp;
+          let noOfLots;
+
+          if (direction) {
+            ltp = await getLTP(symbol.instrument_key);
+            noOfLots = Math.floor(usableFunds / (ltp * symbol.lot_size));
           }
-        };
-        const balance = Number(key.balance);
-        const usableFunds = (balance / 100) * 25;
-        let ltp;
-        let noOfLots;
 
-        if (direction) {
-          ltp = await getLTP(symbol.instrument_key);
-          noOfLots = Math.floor(usableFunds / (ltp * symbol.lot_size));
-        }
+          const pnl = await getTodaysPnL();
 
-        const pnl = await getTodaysPnL();
+          const maxLoss = balance / 10;
+          const maxProfit = (balance / 10) * 1.5;
 
-        const maxLoss = balance / 10;
-        const maxProfit = (balance / 10) * 1.5;
+          const placeIntradayOrder = async ({
+            instrument_key,
+            transaction_type = "BUY",
+            quantity = 1,
+            accessToken = key.token,
+          }) => {
+            try {
+              const orderData = {
+                product: "I",
+                validity: "DAY",
+                price: 0,
+                tag: "",
+                order_type: "MARKET",
+                transaction_type,
+                disclosed_quantity: 0,
+                trigger_price: 0,
+                is_amo: false,
+                quantity,
+                instrument_token: instrument_key,
+              };
 
-        const placeIntradayOrder = async ({
-          instrument_key,
-          transaction_type = "BUY",
-          quantity = 1,
-          accessToken = key.token,
-        }) => {
-          try {
-            const orderData = {
-              product: "I",
-              validity: "DAY",
-              price: 0,
-              tag: "",
-              order_type: "MARKET",
-              transaction_type,
-              disclosed_quantity: 0,
-              trigger_price: 0,
-              is_amo: false,
-              quantity,
-              instrument_token: instrument_key,
+              const response = await axios.post(
+                "https://api.upstox.com/v2/order/place",
+                orderData,
+                {
+                  headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                  },
+                },
+              );
+
+              console.log("✅ Order placed:", response.data);
+              return response.data;
+            } catch (err) {
+              console.error(
+                "❌ Order error:",
+                err.response?.data || err.message,
+              );
+              throw err;
+            }
+          };
+
+          // 🔹 Wrapper to place a BUY order
+          const newOrder = async (data) => {
+            data.transaction_type = "BUY";
+            return await placeIntradayOrder(data);
+          };
+
+          // 🔹 Wrapper to place a SELL order
+          const exitOrder = async (data) => {
+            data.transaction_type = "SELL";
+            return await placeIntradayOrder(data);
+          };
+
+          const lastTrade = await TradeLog.findDoc(
+            { brokerKeyId: key.id, type: "entry" },
+            { allowNull: true },
+          );
+
+          if (pnl + maxLoss <= 0 || pnl >= maxProfit) {
+            if (!lastTrade) {
+              key.status = false;
+              console.log(
+                "No last trade, marking key as inactive, daily limit reached",
+                key.id,
+              );
+              await key.save();
+              continue;
+            }
+            const exitOrderData = {
+              instrument_key: lastTrade.asset,
+              quantity: lastTrade.quantity,
             };
 
-            const response = await axios.post(
-              "https://api.upstox.com/v2/order/place",
-              orderData,
-              {
-                headers: {
-                  Authorization: `Bearer ${accessToken}`,
-                  Accept: "application/json",
-                  "Content-Type": "application/json",
-                },
-              },
-            );
-
-            console.log("✅ Order placed:", response.data);
-            return response.data;
-          } catch (err) {
-            console.error("❌ Order error:", err.response?.data || err.message);
-            throw err;
-          }
-        };
-
-        // 🔹 Wrapper to place a BUY order
-        const newOrder = async (data) => {
-          data.transaction_type = "BUY";
-          return await placeIntradayOrder(data);
-        };
-
-        // 🔹 Wrapper to place a SELL order
-        const exitOrder = async (data) => {
-          data.transaction_type = "SELL";
-          return await placeIntradayOrder(data);
-        };
-
-        const lastTrade = await TradeLog.findDoc(
-          { brokerKeyId: key.id, type: "entry" },
-          { allowNull: true },
-        );
-
-        if (pnl + maxLoss <= 0 || pnl >= maxProfit) {
-          if (!lastTrade) {
+            console.log("Exiting the last trade, daily limit reached", key.id);
+            await exitOrder(exitOrderData);
+            lastTrade.type = "exit";
+            console.log("Updating last trade, marking as exited", key.id);
+            await lastTrade.save();
             key.status = false;
+            console.log(
+              "Marking key as inactive, after exiting last trade",
+              key.id,
+            );
             await key.save();
             continue;
           }
-          const exitOrderData = {
-            instrument_key: lastTrade.asset,
-            quantity: lastTrade.quantity,
-          };
 
-          await exitOrder(exitOrderData);
-          lastTrade.type = "exit";
-          await lastTrade.save();
-          key.status = false;
-          await key.save();
-          continue;
-        }
-
-        if (signal === "No Action") {
-          continue;
-        }
-
-        if (signal === "Exit" || signal === "PE Exit" || signal === "CE Exit") {
-          if (!lastTrade) continue;
-
-          const exitOrderData = {
-            instrument_key: lastTrade.asset,
-            quantity: lastTrade.quantity,
-          };
-
-          if (signal === "PE Exit") {
-            if (lastTrade.direction === "PE") {
-              await exitOrder(exitOrderData);
-              lastTrade.type = "exit";
-              await lastTrade.save();
-              continue;
-            }
-            continue;
-          } else if (signal === "CE Exit") {
-            if (lastTrade.direction === "CE") {
-              await exitOrder(exitOrderData);
-              lastTrade.type = "exit";
-              await lastTrade.save();
-              continue;
-            }
+          if (signal === "No Action") {
             continue;
           }
 
-          if (signal === "Exit") {
+          if (
+            signal === "Exit" ||
+            signal === "PE Exit" ||
+            signal === "CE Exit"
+          ) {
+            if (!lastTrade) continue;
+
+            const exitOrderData = {
+              instrument_key: lastTrade.asset,
+              quantity: lastTrade.quantity,
+            };
+
+            if (signal === "PE Exit") {
+              if (lastTrade.direction === "PE") {
+                console.log(
+                  "Signal PE EXIT, lastrade PE, exiting trade",
+                  key.id,
+                );
+                await exitOrder(exitOrderData);
+                lastTrade.type = "exit";
+                console.log("Updating last trade", key.id);
+                await lastTrade.save();
+                continue;
+              }
+              continue;
+            } else if (signal === "CE Exit") {
+              if (lastTrade.direction === "CE") {
+                console.log(
+                  "Signal CE EXIT, lasttrade CE, exiting trade",
+                  key.id,
+                );
+                await exitOrder(exitOrderData);
+                lastTrade.type = "exit";
+                console.log("Updating last trade", key.id);
+                await lastTrade.save();
+                continue;
+              }
+              continue;
+            }
+
+            if (signal === "Exit") {
+              console.log("Signal Exit, Exiting last trade", key.id);
+              await exitOrder(exitOrderData);
+              lastTrade.type = "exit";
+              console.log("Updating last trade", key.id);
+              await lastTrade.save();
+              continue;
+            }
+          }
+
+          if (lastTrade) {
+            if (lastTrade.direction === direction) continue;
+            const exitOrderData = {
+              instrument_key: lastTrade.asset,
+              quantity: lastTrade.quantity,
+            };
+            console.log("Changing trade, exiting last trade", key.id);
             await exitOrder(exitOrderData);
             lastTrade.type = "exit";
+            console.log("Updating last trade", key.id);
             await lastTrade.save();
-            continue;
+            const newOrderData = {
+              instrument_key: symbol.instrument_key,
+              quantity: noOfLots * symbol.lot_size,
+            };
+            const newTradeLog = {
+              brokerId: key.brokerId,
+              brokerKeyId: key.id,
+              userId: key.userId,
+              baseAssetId: dailyAsset.id,
+              asset: symbol.instrument_key,
+              direction,
+              quantity: newOrderData.quantity,
+              type: "entry",
+            };
+
+            console.log("Placing new trade after exiting last", key.id);
+            await newOrder(newOrderData);
+
+            console.log("Creating new trade log, after exiting last", key.id);
+            await TradeLog.create(newTradeLog);
+          } else {
+            const newOrderData = {
+              instrument_key: symbol.instrument_key,
+              quantity: noOfLots * symbol.lot_size,
+            };
+            const newTradeLog = {
+              brokerId: key.brokerId,
+              brokerKeyId: key.id,
+              userId: key.userId,
+              baseAssetId: dailyAsset.id,
+              asset: symbol.instrument_key,
+              direction,
+              quantity: newOrderData.quantity,
+              type: "entry",
+            };
+
+            console.log("Placing fresh trade", key.id);
+            await newOrder(newOrderData);
+
+            console.log("Creating new trade log", key.id);
+            await TradeLog.create(newTradeLog);
           }
-        }
-
-        if (lastTrade) {
-          if (lastTrade.direction === direction) continue;
-          const exitOrderData = {
-            instrument_key: lastTrade.asset,
-            quantity: lastTrade.quantity,
-          };
-          await exitOrder(exitOrderData);
-          lastTrade.type = "exit";
-          await lastTrade.save();
-          const newOrderData = {
-            instrument_key: symbol.instrument_key,
-            quantity: noOfLots * symbol.lot_size,
-          };
-          const newTradeLog = {
-            brokerId: key.brokerId,
-            brokerKeyId: key.id,
-            userId: key.userId,
-            baseAssetId: dailyAsset.id,
-            asset: symbol.instrument_key,
-            direction,
-            quantity: newOrderData.quantity,
-            type: "entry",
-          };
-          await newOrder(newOrderData);
-          await TradeLog.create(newTradeLog);
-        } else {
-          const newOrderData = {
-            instrument_key: symbol.instrument_key,
-            quantity: noOfLots * symbol.lot_size,
-          };
-          const newTradeLog = {
-            brokerId: key.brokerId,
-            brokerKeyId: key.id,
-            userId: key.userId,
-            baseAssetId: dailyAsset.id,
-            asset: symbol.instrument_key,
-            direction,
-            quantity: newOrderData.quantity,
-            type: "entry",
-          };
-
-          await newOrder(newOrderData);
-          await TradeLog.create(newTradeLog);
+        } catch (e) {
+          console.log(e);
         }
       }
     }
