@@ -353,6 +353,8 @@ cron.schedule("* * * * * *", async () => {
                 instrument_token: instrument_key,
               };
 
+	      console.log(orderData);
+
               const response = await axios.post(
                 "https://api.upstox.com/v2/order/place",
                 orderData,
