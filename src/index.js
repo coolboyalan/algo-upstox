@@ -536,10 +536,11 @@ cron.schedule("* * * * * *", async () => {
     }
   } catch (e) {
     if (axios.isAxiosError(e)) {
-      console.error("❌ Cron Error:", e.message);
+      console.error("❌ Cron Error:", e.response.data?.errors);
+      console.log(e.response.data?.data);
       if (e.response) {
-        console.error("📉 Response Data:", e.response.data);
-        console.error("📊 Status Code:", e.response.status);
+        console.error("📉 Response Data:", e.response?.data?.errors);
+        console.error("📊 Status Code:", e.response?.status);
       }
     } else {
       console.error("❌ Unknown Error:", e.message);
