@@ -223,11 +223,11 @@ cron.schedule("* * * * * *", async () => {
 
       let symbol;
 
-	if (direction === "CE"){
-		assetPrice+=500
-	}else if (direction === "PE"){
-		assetPrice-=500
-	}
+	// if (direction === "CE"){
+	// 	assetPrice+=500
+	// }else if (direction === "PE"){
+	// 	assetPrice-=500
+	// }
 	    
       if (direction) {
         symbol = await findImmediateOption(
