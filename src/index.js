@@ -223,11 +223,11 @@ cron.schedule("* * * * * *", async () => {
 
       let symbol;
 
-	// if (direction === "CE"){
-	// 	assetPrice+=500
-	// }else if (direction === "PE"){
-	// 	assetPrice-=500
-	// }
+	if (direction === "CE"){
+		assetPrice+=500
+	}else if (direction === "PE"){
+		assetPrice-=500
+	 }
 	    
       if (direction) {
         symbol = await findImmediateOption(
@@ -325,7 +325,7 @@ cron.schedule("* * * * * *", async () => {
             }
           };
           const balance = Number(key.balance);
-          const usableFunds = (balance / 100) * 45;
+          const usableFunds = (balance / 100) * 20;
           let ltp;
           let noOfLots;
 
@@ -336,8 +336,8 @@ cron.schedule("* * * * * *", async () => {
 
           const pnl = await getTodaysPnL();
 
-          const maxLoss = balance / 10;
-          const maxProfit = (balance / 10) * 1.5;
+          const maxLoss = balance / 20;
+          const maxProfit = (balance / 10);
 
           const placeIntradayOrder = async ({
             instrument_key,
