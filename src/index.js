@@ -48,26 +48,30 @@ function toKiteISTFormat(dateObj) {
   return `${yyyy}-${mm}-${dd} ${hh}:${min}:00`;
 }
 
+let isRunning = false;
+
 cron.schedule("* * * * * *", async () => {
-  const istNow = new Date(
-    new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
-  );
-
-  const istHour = istNow.getHours();
-  const istMinute = istNow.getMinutes();
-  const second = istNow.getSeconds();
-
-  const preRange =
-    (istHour === 8 && istMinute >= 30) ||
-    (istHour > 8 && istHour < 15) ||
-    (istHour === 15 && istMinute <= 30);
-
-  const isInMarketRange =
-    (istHour === 9 && istMinute >= 30) ||
-    (istHour > 9 && istHour < 15) ||
-    (istHour === 15 && istMinute <= 12);
-
+  if (isRunning) return;
+  isRunning = true;
   try {
+    const istNow = new Date(
+      new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
+    );
+
+    const istHour = istNow.getHours();
+    const istMinute = istNow.getMinutes();
+    const second = istNow.getSeconds();
+
+    const preRange =
+      (istHour === 8 && istMinute >= 30) ||
+      (istHour > 8 && istHour < 15) ||
+      (istHour === 15 && istMinute <= 30);
+
+    const isInMarketRange =
+      (istHour === 9 && istMinute >= 30) ||
+      (istHour > 9 && istHour < 15) ||
+      (istHour === 15 && istMinute <= 12);
+
     if (!preRange && !isInMarketRange) return;
 
     if (preRange) {
@@ -556,6 +560,8 @@ cron.schedule("* * * * * *", async () => {
     } else {
       console.error("❌ Unknown Error:", e.message);
     }
+  } finally {
+    isRunning = false;
   }
 });
 
