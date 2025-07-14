@@ -121,7 +121,7 @@ cron.schedule("* * * * * *", async () => {
       }
     }
 
-    if (isInMarketRange && istMinute % 3 === 0 && second === 0) {
+    if (isInMarketRange && second % 10 === 0) {
       const toTime = toKiteISTFormat(istNow);
       const fromTime = toKiteISTFormat(
         new Date(istNow.getTime() - 3 * 60 * 1000),
@@ -223,12 +223,12 @@ cron.schedule("* * * * * *", async () => {
 
       let symbol;
 
-	if (direction === "CE"){
-		assetPrice+=500
-	}else if (direction === "PE"){
-		assetPrice-=500
-	 }
-	    
+      if (direction === "CE") {
+        assetPrice += 500;
+      } else if (direction === "PE") {
+        assetPrice -= 500;
+      }
+
       if (direction) {
         symbol = await findImmediateOption(
           dailyAsset.name,
@@ -337,7 +337,7 @@ cron.schedule("* * * * * *", async () => {
           const pnl = await getTodaysPnL();
 
           const maxLoss = balance / 20;
-          const maxProfit = (balance / 10);
+          const maxProfit = balance / 10;
 
           const placeIntradayOrder = async ({
             instrument_key,
@@ -360,7 +360,7 @@ cron.schedule("* * * * * *", async () => {
                 instrument_token: instrument_key,
               };
 
-	      console.log(orderData);
+              console.log(orderData);
 
               const response = await axios.post(
                 "https://api.upstox.com/v2/order/place",
@@ -431,6 +431,7 @@ cron.schedule("* * * * * *", async () => {
             continue;
           }
 
+          if (istMinute % 3 === 0 && second >= 10) continue;
           if (signal === "No Action") {
             continue;
           }
