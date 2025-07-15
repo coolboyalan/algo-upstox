@@ -48,6 +48,99 @@ function toKiteISTFormat(dateObj) {
   return `${yyyy}-${mm}-${dd} ${hh}:${min}:00`;
 }
 
+async function exitOpenTrades(keys) {
+  for (let key of keys) {
+    const placeIntradayOrder = async ({
+      instrument_key,
+      transaction_type = "BUY",
+      quantity = 1,
+      accessToken = key.token,
+    }) => {
+      try {
+        const orderData = {
+          product: "I",
+          validity: "DAY",
+          price: 0,
+          tag: "",
+          order_type: "MARKET",
+          transaction_type,
+          disclosed_quantity: 0,
+          trigger_price: 0,
+          is_amo: false,
+          quantity,
+          instrument_token: instrument_key,
+        };
+
+        console.log(orderData);
+
+        const response = await axios.post(
+          "https://api.upstox.com/v2/order/place",
+          orderData,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: "application/json",
+              "Content-Type": "application/json",
+            },
+          },
+        );
+
+        console.log("✅ Order placed:", response.data);
+        return response.data;
+      } catch (err) {
+        console.error("❌ Order error:", err.response?.data || err.message);
+        throw err;
+      }
+    };
+
+    // 🔹 Wrapper to place a BUY order
+    const newOrder = async (data) => {
+      data.transaction_type = "BUY";
+      return await placeIntradayOrder(data);
+    };
+
+    // 🔹 Wrapper to place a SELL order
+    const exitOrder = async (data) => {
+      data.transaction_type = "SELL";
+      return await placeIntradayOrder(data);
+    };
+
+    const lastTrade = await TradeLog.findDoc(
+      { brokerKeyId: key.id, type: "entry" },
+      { allowNull: true },
+    );
+
+    if (!lastTrade) {
+      if (!key.status) continue;
+
+      key.status = false;
+      console.log(
+        "No last trade, marking key as inactive, closing time",
+        key.id,
+      );
+      await key.save();
+      continue;
+    }
+    const exitOrderData = {
+      instrument_key: lastTrade.asset,
+      quantity: lastTrade.quantity,
+    };
+
+    console.log("Exiting the last trade, closing time", key.id);
+    await exitOrder(exitOrderData);
+    lastTrade.type = "exit";
+    console.log("Updating last trade, closing time", key.id);
+    await lastTrade.save();
+    key.status = false;
+    console.log(
+      "Marking key as inactive, after exiting last trade. Closing time",
+      key.id,
+    );
+    await key.save();
+    continue;
+  }
+}
+
 let isRunning = false;
 
 cron.schedule("* * * * * *", async () => {
@@ -70,7 +163,7 @@ cron.schedule("* * * * * *", async () => {
     const isInMarketRange =
       (istHour === 9 && istMinute >= 30) ||
       (istHour > 9 && istHour < 15) ||
-      (istHour === 15 && istMinute <= 12);
+      (istHour === 15 && istMinute <= 15);
 
     if (!preRange && !isInMarketRange) return;
 
@@ -123,6 +216,10 @@ cron.schedule("* * * * * *", async () => {
         adminKeys = admin[0];
         keys = responseKeys;
       }
+    }
+
+    if (istHour === 15 && istMinute === 15) {
+      return await exitOpenTrades(keys);
     }
 
     if (isInMarketRange && second % 10 === 0) {
