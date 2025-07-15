@@ -662,4 +662,30 @@ cron.schedule("* * * * * *", async () => {
   }
 });
 
+server.post("/stop/:id?", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    let keys;
+    keys = id
+      ? await BrokerKey.findDocById(id)
+      : await BrokerKey.findAll({
+          include: [
+            {
+              model: Broker,
+              where: {
+                name: "Upstox",
+              },
+            },
+          ],
+          where: {
+            status: true,
+          },
+        });
+    await exitOpenTrades(keys.length ? keys : [keys]);
+    sendResponse(httpStatus.OK, res, null, "Deactivated for the day");
+  } catch (e) {
+    sendResponse(500, res, null, "Internal Error");
+  }
+});
+
 server.listen(3003);
