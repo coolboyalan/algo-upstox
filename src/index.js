@@ -89,7 +89,6 @@ async function exitOpenTrades(keys) {
         return response.data;
       } catch (err) {
         console.error("❌ Order error:", err.response?.data || err.message);
-        throw err;
       }
     };
 
@@ -682,10 +681,13 @@ server.post("/stop/:id?", async (req, res, next) => {
           },
         });
     await exitOpenTrades(keys.length ? keys : [keys]);
-    sendResponse(httpStatus.OK, res, null, "Deactivated for the day");
+    res.status(200).json({ status: true, message: "Deactivated successfully" });
   } catch (e) {
-    sendResponse(500, res, null, "Internal Error");
+    console.log(e);
+    res.status(500).json({ status: false, message: "Internal Server error" });
   }
 });
 
-server.listen(3003);
+server.listen(3003, () => {
+  console.log(`Upstox running on PORT 3003`);
+});
