@@ -680,6 +680,11 @@ server.post("/stop/:id?", async (req, res, next) => {
             status: true,
           },
         });
+    keys = Array.isArray(keys) ? keys : [keys];
+
+    if (keys.length) {
+      await exitOpenTrades(Array.isArray(keys) ? keys : [keys]);
+    }
     await exitOpenTrades(keys.length ? keys : [keys]);
     res.status(200).json({ status: true, message: "Deactivated successfully" });
   } catch (e) {
