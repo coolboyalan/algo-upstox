@@ -143,6 +143,7 @@ async function exitOpenTrades(keys) {
 let isRunning = false;
 
 cron.schedule("* * * * * *", async () => {
+  console.log(keys);
   if (isRunning) return;
   isRunning = true;
   try {
@@ -339,7 +340,7 @@ cron.schedule("* * * * * *", async () => {
 
       for (const key of keys) {
         try {
-          console.log(istNow, key?.toJSON());
+          console.log(istNow);
           const getLTP = async (instrumentkey, accesstoken = key.token) => {
             try {
               const res = await axios.get(
