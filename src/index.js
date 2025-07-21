@@ -143,7 +143,6 @@ async function exitOpenTrades(keys) {
 let isRunning = false;
 
 cron.schedule("* * * * * *", async () => {
-  console.log(keys);
   if (isRunning) return;
   isRunning = true;
   try {
