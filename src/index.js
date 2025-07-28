@@ -324,9 +324,9 @@ cron.schedule("* * * * * *", async () => {
       let symbol;
 
       if (direction === "CE") {
-        assetPrice += 200;
+        assetPrice += 400;
       } else if (direction === "PE") {
-        assetPrice -= 200;
+        assetPrice -= 400;
       }
 
       if (direction) {
@@ -431,7 +431,7 @@ cron.schedule("* * * * * *", async () => {
 
           if (direction) {
             ltp = await getLTP(symbol.instrument_key);
-            noOfLots = 1 ?? Math.floor(usableFunds / (ltp * symbol.lot_size));
+            noOfLots = Math.floor(usableFunds / (ltp * symbol.lot_size));
           }
 
           const pnl = await getTodaysPnL();
