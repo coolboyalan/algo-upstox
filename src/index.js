@@ -224,11 +224,11 @@ cron.schedule("* * * * * *", async () => {
     if (isInMarketRange && second % 10 === 0) {
       const toTime = toKiteISTFormat(istNow);
       const fromTime = toKiteISTFormat(
-        new Date(istNow.getTime() - 3 * 60 * 1000),
+        new Date(istNow.getTime() - 5 * 60 * 1000),
       );
 
       const instrumentToken = dailyAsset.zerodhaToken;
-      const interval = "3minute";
+      const interval = "5minute";
       const apiKey = adminKeys.apiKey;
       const accessToken = adminKeys.token;
 
@@ -532,7 +532,7 @@ cron.schedule("* * * * * *", async () => {
           }
 
           if (second >= 10) continue;
-          if (istMinute % 3 !== 0) continue;
+          if (istMinute % 5 !== 0) continue;
           if (signal === "No Action") {
             continue;
           }
