@@ -337,6 +337,8 @@ cron.schedule("* * * * * *", async () => {
         );
       }
 
+      console.log({istNow,price,direction,signal})
+
       for (const key of keys) {
         try {
           console.log(istNow);
