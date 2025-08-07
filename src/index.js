@@ -341,7 +341,6 @@ cron.schedule("* * * * * *", async () => {
 
       for (const key of keys) {
         try {
-          console.log(istNow);
           const getLTP = async (instrumentkey, accesstoken = key.token) => {
             try {
               const res = await axios.get(
