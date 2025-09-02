@@ -140,525 +140,521 @@ async function exitOpenTrades(keys) {
   }
 }
 
-let isRunning = false;
+// Separate flags for two crons
+let isRunning3Min = false;
+let isRunning5Min = false;
 
-cron.schedule("* * * * * *", async () => {
-  if (isRunning) return;
-  isRunning = true;
-  try {
-    const istNow = new Date(
-      new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
-    );
+// Common function to run the core trading logic for given parameters
+async function runTradingLogic({ intervalMinutes, intervalString }) {
+  const istNow = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
+  );
 
-    const istHour = istNow.getHours();
-    const istMinute = istNow.getMinutes();
-    const second = istNow.getSeconds();
+  const istHour = istNow.getHours();
+  const istMinute = istNow.getMinutes();
+  const second = istNow.getSeconds();
 
-    const preRange =
-      (istHour === 8 && istMinute >= 30) ||
-      (istHour > 8 && istHour < 15) ||
-      (istHour === 15 && istMinute <= 30);
+  const preRange =
+    (istHour === 8 && istMinute >= 30) ||
+    (istHour > 8 && istHour < 15) ||
+    (istHour === 15 && istMinute <= 30);
 
-    const isInMarketRange =
-      (istHour === 9 && istMinute >= 30) ||
-      (istHour > 9 && istHour < 15) ||
-      (istHour === 15 && istMinute <= 15);
+  const isInMarketRange =
+    (istHour === 9 && istMinute >= 30) ||
+    (istHour > 9 && istHour < 15) ||
+    (istHour === 15 && istMinute <= 15);
 
-    if (!preRange && !isInMarketRange) return;
+  if (!preRange && !isInMarketRange) return;
 
-    if (preRange) {
-      if (!dailyLevels) {
-        const [dailyData] = await sequelize.query(`
-			  SELECT * FROM "DailyLevels" WHERE "forDay" = '${getISTMidnightFakeUTCString()}'
-			  `);
+  if (preRange) {
+    if (!dailyLevels) {
+      const [dailyData] = await sequelize.query(`
+                        SELECT * FROM "DailyLevels" WHERE "forDay" = '${getISTMidnightFakeUTCString()}'
+                        `);
 
-        dailyLevels = dailyData[0];
-      }
-
-      if (!dailyAsset) {
-        const day = dayMap[istNow.getDay()];
-        const [response] = await sequelize.query(
-          `SELECT "name", "zerodhaToken","Assets"."id" FROM "DailyAssets"
-           INNER JOIN "Assets" ON "DailyAssets"."assetId" = "Assets"."id"
-           WHERE "day" = '${day}'`,
-        );
-
-        if (!response.length) {
-          return console.log("❌ No asset available for today");
-        }
-
-        dailyAsset = response[0];
-      }
-
-      if (!keys || !adminKeys || (istMinute % 1 === 0 && second % 40 === 0)) {
-        const responseKeys = await BrokerKey.findAll({
-          include: [
-            {
-              model: Broker,
-              where: {
-                name: "Upstox",
-              },
-            },
-          ],
-          where: {
-            status: true,
-          },
-        });
-        const [admin] = await sequelize.query(
-          `SELECT * FROM "BrokerKeys"
-         INNER JOIN "Users" ON "BrokerKeys"."userId" = "Users"."id"
-         INNER JOIN "Brokers" ON "BrokerKeys"."brokerId" = "Brokers"."id"
-         WHERE "Users"."role" = 'admin' AND "Brokers"."name" = 'Zerodha'
-         `,
-        );
-
-        adminKeys = admin[0];
-        keys = responseKeys;
-      }
+      dailyLevels = dailyData[0];
     }
 
-    if (istHour === 15 && istMinute === 15) {
-      return await exitOpenTrades(keys);
-    }
-
-    if (isInMarketRange && second % 10 === 0) {
-      const toTime = toKiteISTFormat(istNow);
-      const fromTime = toKiteISTFormat(
-        new Date(istNow.getTime() - 3 * 60 * 1000),
+    if (!dailyAsset) {
+      const day = dayMap[istNow.getDay()];
+      const [response] = await sequelize.query(
+        `SELECT "name", "zerodhaToken","Assets"."id" FROM "DailyAssets"
+         INNER JOIN "Assets" ON "DailyAssets"."assetId" = "Assets"."id"
+         WHERE "day" = '${day}'`,
       );
 
-      const instrumentToken = dailyAsset.zerodhaToken;
-      const interval = "3minute";
-      const apiKey = adminKeys.apiKey;
-      const accessToken = adminKeys.token;
+      if (!response.length) {
+        return console.log("❌ No asset available for today");
+      }
 
-      const url = `https://api.kite.trade/instruments/historical/${instrumentToken}/${interval}?from=${encodeURIComponent(
-        fromTime,
-      )}&to=${encodeURIComponent(toTime)}&continuous=false`;
+      dailyAsset = response[0];
+    }
 
-      const response = await axios.get(url, {
-        headers: {
-          "X-Kite-Version": "3",
-          Authorization: `token ${apiKey}:${accessToken}`,
+    if (!keys || !adminKeys || (istMinute % 1 === 0 && second % 40 === 0)) {
+      const responseKeys = await BrokerKey.findAll({
+        include: [
+          {
+            model: Broker,
+            where: {
+              name: "Upstox",
+            },
+          },
+        ],
+        where: {
+          status: true,
         },
       });
+      const [admin] = await sequelize.query(
+        `SELECT * FROM "BrokerKeys"
+       INNER JOIN "Users" ON "BrokerKeys"."userId" = "Users"."id"
+       INNER JOIN "Brokers" ON "BrokerKeys"."brokerId" = "Brokers"."id"
+       WHERE "Users"."role" = 'admin' AND "Brokers"."name" = 'Zerodha'
+       `,
+      );
 
-      const { data } = response.data;
+      adminKeys = admin[0];
+      keys = responseKeys;
+    }
+  }
 
-      if (!data || !Array.isArray(data.candles) || data.candles.length === 0) {
-        console.log("⚠️ No candle data available");
-        return;
-      }
+  if (istHour === 15 && istMinute === 15) {
+    return await exitOpenTrades(keys);
+  }
 
-      const latestCandle = data.candles[data.candles.length - 1];
-      const price = latestCandle[4]; // close price
+  if (isInMarketRange && second % 10 === 0) {
+    const toTime = toKiteISTFormat(istNow);
+    const fromTime = toKiteISTFormat(
+      new Date(istNow.getTime() - intervalMinutes * 60 * 1000),
+    );
 
-      if (price === null || price === undefined) {
-        return console.log("⚠️ Invalid Price");
-      }
+    const instrumentToken = dailyAsset.zerodhaToken;
+    const interval = intervalString;
+    const apiKey = adminKeys.apiKey;
+    const accessToken = adminKeys.token;
 
-      const { bc, tc, r1, r2, r3, r4, s1, s2, s3, s4 } = dailyLevels;
+    const url = `https://api.kite.trade/instruments/historical/${instrumentToken}/${interval}?from=${encodeURIComponent(
+      fromTime,
+    )}&to=${encodeURIComponent(toTime)}&continuous=false`;
 
-      const BUFFER = dailyLevels.buffer;
-      let signal = "No Action";
-      let reason = "Price is in a neutral zone.";
-      let direction;
-      let assetPrice;
-      let lastTrade;
+    const response = await axios.get(url, {
+      headers: {
+        "X-Kite-Version": "3",
+        Authorization: `token ${apiKey}:${accessToken}`,
+      },
+    });
 
-      if (price % 100 > 50) {
-        assetPrice = parseInt(price / 100) * 100 + 100;
-      } else {
-        assetPrice = parseInt(price / 100) * 100;
-      }
+    const { data } = response.data;
 
-      // If price is above TC and within TC + BUFFER, Buy
-      if (price >= tc && price <= tc + BUFFER) {
-        direction = "CE";
+    if (!data || !Array.isArray(data.candles) || data.candles.length === 0) {
+      console.log("⚠️ No candle data available");
+      return;
+    }
+
+    const latestCandle = data.candles[data.candles.length - 1];
+    const price = latestCandle[4]; // close price
+
+    if (price === null || price === undefined) {
+      return console.log("⚠️ Invalid Price");
+    }
+
+    const { bc, tc, r1, r2, r3, r4, s1, s2, s3, s4 } = dailyLevels;
+
+    const BUFFER = dailyLevels.buffer;
+    let signal = "No Action";
+    let reason = "Price is in a neutral zone.";
+    let direction;
+    let assetPrice;
+    let lastTrade;
+
+    if (price % 100 > 50) {
+      assetPrice = parseInt(price / 100) * 100 + 100;
+    } else {
+      assetPrice = parseInt(price / 100) * 100;
+    }
+
+    // If price is above TC and within TC + BUFFER, Buy
+    if (price >= tc && price <= tc + BUFFER) {
+      direction = "CE";
+      signal = "Buy";
+      reason = "Price is above TC within buffer.";
+    }
+    // If price is below BC and within BC - BUFFER, Sell
+    else if (price <= bc && price >= bc - BUFFER) {
+      direction = "PE";
+      signal = "Sell";
+      reason = "Price is below BC within buffer.";
+    }
+    // If price is between TC and BC, No Action
+    else if (price < tc && price > bc) {
+      signal = "Exit";
+      reason = "Price is within CPR range.";
+    }
+
+    const levelsMap = { r1, r2, r3, r4, s1, s2, s3, s4 };
+
+    Object.entries(levelsMap).forEach(([levelName, level]) => {
+      if (price > level && price <= level + BUFFER) {
         signal = "Buy";
-        reason = "Price is above TC within buffer.";
-      }
-      // If price is below BC and within BC - BUFFER, Sell
-      else if (price <= bc && price >= bc - BUFFER) {
-        direction = "PE";
+        reason = `Price is above ${levelName} (${level}) within buffer.`;
+        direction = "CE";
+      } else if (price < level && price >= level - BUFFER) {
         signal = "Sell";
-        reason = "Price is below BC within buffer.";
+        reason = `Price is below ${levelName} (${level}) within buffer.`;
+        direction = "PE";
       }
-      // If price is between TC and BC, No Action
-      else if (price < tc && price > bc) {
-        signal = "Exit";
-        reason = "Price is within CPR range.";
-      }
+    });
 
-      const levelsMap = { r1, r2, r3, r4, s1, s2, s3, s4 };
+    const innerLevelMap = { r1, r2, r3, r4, s1, s2, s3, s4, tc, bc };
 
-      Object.entries(levelsMap).forEach(([levelName, level]) => {
-        if (price > level && price <= level + BUFFER) {
-          signal = "Buy";
-          reason = `Price is above ${levelName} (${level}) within buffer.`;
-          direction = "CE";
-        } else if (price < level && price >= level - BUFFER) {
-          signal = "Sell";
-          reason = `Price is below ${levelName} (${level}) within buffer.`;
-          direction = "PE";
+    Object.entries(innerLevelMap).find(([levelName, level]) => {
+      if (signal === "No Action") {
+        if (data.close > level && data.open < level) {
+          signal = "PE Exit";
+          reason = `Price crossed the level ${levelName}`;
+          return true;
         }
-      });
-
-      const innerLevelMap = { r1, r2, r3, r4, s1, s2, s3, s4, tc, bc };
-
-      Object.entries(innerLevelMap).find(([levelName, level]) => {
-        if (signal === "No Action") {
-          if (data.close > level && data.open < level) {
-            signal = "PE Exit";
-            reason = `Price crossed the level ${levelName}`;
-            return true;
-          }
-          if (data.close < level && data.open > level) {
-            signal = "CE Exit";
-            reason = `Price crossed the level ${levelName}`;
-            return true;
-          }
+        if (data.close < level && data.open > level) {
+          signal = "CE Exit";
+          reason = `Price crossed the level ${levelName}`;
+          return true;
         }
-      });
-
-      let symbol;
-
-      if (direction === "CE") {
-        assetPrice += 600;
-      } else if (direction === "PE") {
-        assetPrice -= 600;
       }
+    });
 
-      if (direction) {
-        symbol = await findImmediateOption(
-          dailyAsset.name,
-          assetPrice,
-          direction,
-        );
-      }
+    let symbol;
 
-      console.log({ istNow, price, direction, signal });
+    if (direction === "CE") {
+      assetPrice += 600;
+    } else if (direction === "PE") {
+      assetPrice -= 600;
+    }
 
-      for (const key of keys) {
-        try {
-          const getLTP = async (instrumentkey, accesstoken = key.token) => {
-            try {
-              const res = await axios.get(
-                "https://api.upstox.com/v2/market-quote/ltp",
-                {
-                  headers: {
-                    Authorization: `Bearer ${accesstoken}`,
-                    Accept: "application/json",
-                  },
-                  params: {
-                    instrument_key: instrumentkey, // e.g., 'NSE_EQ:NHPC'
-                  },
+    if (direction) {
+      symbol = await findImmediateOption(
+        dailyAsset.name,
+        assetPrice,
+        direction,
+      );
+    }
+
+    console.log({ istNow, price, direction, signal });
+
+    for (const key of keys) {
+      try {
+        const getLTP = async (instrumentkey, accesstoken = key.token) => {
+          try {
+            const res = await axios.get(
+              "https://api.upstox.com/v2/market-quote/ltp",
+              {
+                headers: {
+                  Authorization: `Bearer ${accesstoken}`,
+                  Accept: "application/json",
                 },
-              );
-
-              const ltp = Object.values(res.data.data)[0]?.last_price;
-
-              return ltp;
-            } catch (err) {
-              console.error(
-                "❌ error fetching ltp:",
-                err.response?.data || err.message,
-              );
-              throw err;
-            }
-          };
-          const getInitialDayBalance = async () => {
-            try {
-              const res = await axios.get(
-                "https://api.upstox.com/v2/user/get-funds-and-margin",
-                {
-                  headers: {
-                    Authorization: `Bearer ${key.token}`, // key.token = access_token
-                    Accept: "application/json",
-                  },
+                params: {
+                  instrument_key: instrumentkey, // e.g., 'NSE_EQ:NHPC'
                 },
-              );
+              },
+            );
 
-              const openingBalance = res.data.data.equity.available_margin;
-              return openingBalance;
-            } catch (err) {
-              console.error(
-                "❌ Error fetching initial day balance:",
-                err.response?.data || err.message,
-              );
-              throw err;
-            }
-          };
+            const ltp = Object.values(res.data.data)[0]?.last_price;
 
-          const getTodaysPnL = async (accessToken = key.token) => {
-            try {
-              const response = await axios.get(
-                "https://api.upstox.com/v2/portfolio/short-term-positions",
-                {
-                  headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    Accept: "application/json",
-                  },
+            return ltp;
+          } catch (err) {
+            console.error(
+              "❌ error fetching ltp:",
+              err.response?.data || err.message,
+            );
+            throw err;
+          }
+        };
+        const getTodaysPnL = async (accessToken = key.token) => {
+          try {
+            const response = await axios.get(
+              "https://api.upstox.com/v2/portfolio/short-term-positions",
+              {
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  Accept: "application/json",
                 },
-              );
+              },
+            );
 
-              const positions = response.data.data;
+            const positions = response.data.data;
 
-              let totalRealised = 0;
-              let totalUnrealised = 0;
+            let totalRealised = 0;
+            let totalUnrealised = 0;
 
-              for (const pos of positions) {
-                if (pos.product === "I") {
-                  totalRealised += Number(pos.realised || 0);
-                  totalUnrealised += Number(pos.unrealised || 0);
-                }
+            for (const pos of positions) {
+              if (pos.product === "I") {
+                totalRealised += Number(pos.realised || 0);
+                totalUnrealised += Number(pos.unrealised || 0);
               }
-
-              const totalPnL = totalRealised + totalUnrealised;
-
-              return totalPnL;
-            } catch (error) {
-              console.error(
-                "❌ Failed to fetch today's intraday PnL:",
-                error.response?.data || error.message,
-              );
-              throw error;
             }
-          };
-          const balance = Number(key.balance);
-          const usableFunds = (balance / 100) * 10;
-          let ltp;
-          let noOfLots;
 
-          if (direction) {
-            ltp = await getLTP(symbol.instrument_key);
-            noOfLots = Math.floor(usableFunds / (ltp * symbol.lot_size));
+            const totalPnL = totalRealised + totalUnrealised;
+
+            return totalPnL;
+          } catch (error) {
+            console.error(
+              "❌ Failed to fetch today's intraday PnL:",
+              error.response?.data || error.message,
+            );
+            throw error;
           }
+        };
+        const balance = Number(key.balance);
+        const usableFunds = (balance / 100) * 10;
+        let ltp;
+        let noOfLots;
 
-          const pnl = await getTodaysPnL();
+        if (direction) {
+          ltp = await getLTP(symbol.instrument_key);
+          noOfLots = Math.floor(usableFunds / (ltp * symbol.lot_size));
+        }
 
-          const maxLoss = (balance / 100) * 4;
-          const maxProfit = (balance / 100) * 8;
+        const pnl = await getTodaysPnL();
 
-          const placeIntradayOrder = async ({
-            instrument_key,
-            transaction_type = "BUY",
-            quantity = 1,
-            accessToken = key.token,
-          }) => {
-            try {
-              const orderData = {
-                product: "I",
-                validity: "DAY",
-                price: 0,
-                tag: "",
-                order_type: "MARKET",
-                transaction_type,
-                disclosed_quantity: 0,
-                trigger_price: 0,
-                is_amo: false,
-                quantity,
-                instrument_token: instrument_key,
-              };
+        const maxLoss = (balance / 100) * 4;
+        const maxProfit = (balance / 100) * 8;
 
-              console.log(orderData);
-
-              const response = await axios.post(
-                "https://api.upstox.com/v2/order/place",
-                orderData,
-                {
-                  headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    Accept: "application/json",
-                    "Content-Type": "application/json",
-                  },
-                },
-              );
-
-              console.log("✅ Order placed:", response.data);
-              return response.data;
-            } catch (err) {
-              console.error(
-                "❌ Order error:",
-                err.response?.data || err.message,
-              );
-              throw err;
-            }
-          };
-
-          // 🔹 Wrapper to place a BUY order
-          const newOrder = async (data) => {
-            data.transaction_type = "BUY";
-            return await placeIntradayOrder(data);
-          };
-
-          // 🔹 Wrapper to place a SELL order
-          const exitOrder = async (data) => {
-            data.transaction_type = "SELL";
-            return await placeIntradayOrder(data);
-          };
-
-          const lastTrade = await TradeLog.findDoc(
-            { brokerKeyId: key.id, type: "entry" },
-            { allowNull: true },
-          );
-
-          if (pnl + maxLoss <= 0 || pnl >= maxProfit) {
-            if (!lastTrade) {
-              key.status = false;
-              console.log(
-                "No last trade, marking key as inactive, daily limit reached",
-                key.id,
-              );
-              await key.save();
-              continue;
-            }
-            const exitOrderData = {
-              instrument_key: lastTrade.asset,
-              quantity: lastTrade.quantity,
+        const placeIntradayOrder = async ({
+          instrument_key,
+          transaction_type = "BUY",
+          quantity = 1,
+          accessToken = key.token,
+        }) => {
+          try {
+            const orderData = {
+              product: "I",
+              validity: "DAY",
+              price: 0,
+              tag: "",
+              order_type: "MARKET",
+              transaction_type,
+              disclosed_quantity: 0,
+              trigger_price: 0,
+              is_amo: false,
+              quantity,
+              instrument_token: instrument_key,
             };
 
-            console.log("Exiting the last trade, daily limit reached", key.id);
-            await exitOrder(exitOrderData);
-            lastTrade.type = "exit";
-            console.log("Updating last trade, marking as exited", key.id);
-            await lastTrade.save();
+            console.log(orderData);
+
+            const response = await axios.post(
+              "https://api.upstox.com/v2/order/place",
+              orderData,
+              {
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  Accept: "application/json",
+                  "Content-Type": "application/json",
+                },
+              },
+            );
+
+            console.log("✅ Order placed:", response.data);
+            return response.data;
+          } catch (err) {
+            console.error(
+              "❌ Order error:",
+              err.response?.data || err.message,
+            );
+            throw err;
+          }
+        };
+
+        // 🔹 Wrapper to place a BUY order
+        const newOrder = async (data) => {
+          data.transaction_type = "BUY";
+          return await placeIntradayOrder(data);
+        };
+
+        // 🔹 Wrapper to place a SELL order
+        const exitOrder = async (data) => {
+          data.transaction_type = "SELL";
+          return await placeIntradayOrder(data);
+        };
+
+        const lastTrade = await TradeLog.findDoc(
+          { brokerKeyId: key.id, type: "entry" },
+          { allowNull: true },
+        );
+
+        if (pnl + maxLoss <= 0 || pnl >= maxProfit) {
+          if (!lastTrade) {
             key.status = false;
             console.log(
-              "Marking key as inactive, after exiting last trade",
+              "No last trade, marking key as inactive, daily limit reached",
               key.id,
             );
             await key.save();
             continue;
           }
+          const exitOrderData = {
+            instrument_key: lastTrade.asset,
+            quantity: lastTrade.quantity,
+          };
 
+          console.log("Exiting the last trade, daily limit reached", key.id);
+          await exitOrder(exitOrderData);
+          lastTrade.type = "exit";
+          console.log("Updating last trade, marking as exited", key.id);
+          await lastTrade.save();
+          key.status = false;
+          console.log(
+            "Marking key as inactive, after exiting last trade",
+            key.id,
+          );
+          await key.save();
+          continue;
+        }
+
+        // Now control minute and second logic strictly for 3 or 5 min execution
+        if (intervalMinutes === 3) {
           if (second >= 10) continue;
           if (istMinute % 3 !== 0) continue;
-          if (signal === "No Action") {
-            continue;
-          }
+        } else if (intervalMinutes === 5) {
+          if (second !== 0) continue;
+          if (istMinute % 5 !== 0) continue;
+        }
 
-          if (
-            signal === "Exit" ||
-            signal === "PE Exit" ||
-            signal === "CE Exit"
-          ) {
-            if (!lastTrade) continue;
+        if (signal === "No Action") {
+          continue;
+        }
 
-            const exitOrderData = {
-              instrument_key: lastTrade.asset,
-              quantity: lastTrade.quantity,
-            };
+        if (
+          signal === "Exit" ||
+          signal === "PE Exit" ||
+          signal === "CE Exit"
+        ) {
+          if (!lastTrade) continue;
 
-            if (signal === "PE Exit") {
-              if (lastTrade.direction === "PE") {
-                console.log(
-                  "Signal PE EXIT, lastrade PE, exiting trade",
-                  key.id,
-                );
-                await exitOrder(exitOrderData);
-                lastTrade.type = "exit";
-                console.log("Updating last trade", key.id);
-                await lastTrade.save();
-                continue;
-              }
-              continue;
-            } else if (signal === "CE Exit") {
-              if (lastTrade.direction === "CE") {
-                console.log(
-                  "Signal CE EXIT, lasttrade CE, exiting trade",
-                  key.id,
-                );
-                await exitOrder(exitOrderData);
-                lastTrade.type = "exit";
-                console.log("Updating last trade", key.id);
-                await lastTrade.save();
-                continue;
-              }
-              continue;
-            }
+          const exitOrderData = {
+            instrument_key: lastTrade.asset,
+            quantity: lastTrade.quantity,
+          };
 
-            if (signal === "Exit") {
-              console.log("Signal Exit, Exiting last trade", key.id);
+          if (signal === "PE Exit") {
+            if (lastTrade.direction === "PE") {
+              console.log(
+                "Signal PE EXIT, lastrade PE, exiting trade",
+                key.id,
+              );
               await exitOrder(exitOrderData);
               lastTrade.type = "exit";
               console.log("Updating last trade", key.id);
               await lastTrade.save();
               continue;
             }
+            continue;
+          } else if (signal === "CE Exit") {
+            if (lastTrade.direction === "CE") {
+              console.log(
+                "Signal CE EXIT, lasttrade CE, exiting trade",
+                key.id,
+              );
+              await exitOrder(exitOrderData);
+              lastTrade.type = "exit";
+              console.log("Updating last trade", key.id);
+              await lastTrade.save();
+              continue;
+            }
+            continue;
           }
 
-          if (lastTrade) {
-            if (lastTrade.direction === direction) continue;
-            const exitOrderData = {
-              instrument_key: lastTrade.asset,
-              quantity: lastTrade.quantity,
-            };
-            console.log("Changing trade, exiting last trade", key.id);
+          if (signal === "Exit") {
+            console.log("Signal Exit, Exiting last trade", key.id);
             await exitOrder(exitOrderData);
             lastTrade.type = "exit";
             console.log("Updating last trade", key.id);
             await lastTrade.save();
-            const newOrderData = {
-              instrument_key: symbol.instrument_key,
-              quantity: noOfLots * symbol.lot_size,
-            };
-            const newTradeLog = {
-              brokerId: key.brokerId,
-              brokerKeyId: key.id,
-              userId: key.userId,
-              baseAssetId: dailyAsset.id,
-              asset: symbol.instrument_key,
-              direction,
-              quantity: newOrderData.quantity,
-              type: "entry",
-            };
-
-            console.log("Placing new trade after exiting last", key.id);
-            await newOrder(newOrderData);
-
-            console.log("Creating new trade log, after exiting last", key.id);
-            await TradeLog.create(newTradeLog);
-          } else {
-            const newOrderData = {
-              instrument_key: symbol.instrument_key,
-              quantity: noOfLots * symbol.lot_size,
-            };
-            const newTradeLog = {
-              brokerId: key.brokerId,
-              brokerKeyId: key.id,
-              userId: key.userId,
-              baseAssetId: dailyAsset.id,
-              asset: symbol.instrument_key,
-              direction,
-              quantity: newOrderData.quantity,
-              type: "entry",
-            };
-
-            console.log("Placing fresh trade", key.id);
-            await newOrder(newOrderData);
-
-            console.log("Creating new trade log", key.id);
-            await TradeLog.create(newTradeLog);
+            continue;
           }
-        } catch (e) {
-          console.log(e);
         }
+
+        if (lastTrade) {
+          if (lastTrade.direction === direction) continue;
+          const exitOrderData = {
+            instrument_key: lastTrade.asset,
+            quantity: lastTrade.quantity,
+          };
+          console.log("Changing trade, exiting last trade", key.id);
+          await exitOrder(exitOrderData);
+          lastTrade.type = "exit";
+          console.log("Updating last trade", key.id);
+          await lastTrade.save();
+          const newOrderData = {
+            instrument_key: symbol.instrument_key,
+            quantity: noOfLots * symbol.lot_size,
+          };
+          const newTradeLog = {
+            brokerId: key.brokerId,
+            brokerKeyId: key.id,
+            userId: key.userId,
+            baseAssetId: dailyAsset.id,
+            asset: symbol.instrument_key,
+            direction,
+            quantity: newOrderData.quantity,
+            type: "entry",
+          };
+
+          console.log("Placing new trade after exiting last", key.id);
+          await newOrder(newOrderData);
+
+          console.log("Creating new trade log, after exiting last", key.id);
+          await TradeLog.create(newTradeLog);
+        } else {
+          const newOrderData = {
+            instrument_key: symbol.instrument_key,
+            quantity: noOfLots * symbol.lot_size,
+          };
+          const newTradeLog = {
+            brokerId: key.brokerId,
+            brokerKeyId: key.id,
+            userId: key.userId,
+            baseAssetId: dailyAsset.id,
+            asset: symbol.instrument_key,
+            direction,
+            quantity: newOrderData.quantity,
+            type: "entry",
+          };
+
+          console.log("Placing fresh trade", key.id);
+          await newOrder(newOrderData);
+
+          console.log("Creating new trade log", key.id);
+          await TradeLog.create(newTradeLog);
+        }
+      } catch (e) {
+        console.log(e);
       }
     }
+  }
+}
+
+// Schedule 3-minute interval cron
+cron.schedule("* * * * * *", async () => {
+  if (isRunning3Min) return;
+  isRunning3Min = true;
+  try {
+    await runTradingLogic({ intervalMinutes: 3, intervalString: "3minute" });
   } catch (e) {
-    if (axios.isAxiosError(e)) {
-      console.error("❌ Cron Error:", e.response.data);
-      console.log(e.response.data?.data);
-      if (e.response) {
-        console.error("📉 Response Data:", e.response?.data);
-        console.error("📊 Status Code:", e.response?.status);
-      }
-    } else {
-      console.error("❌ Unknown Error:", e.message);
-    }
+    console.error(e);
   } finally {
-    isRunning = false;
+    isRunning3Min = false;
+  }
+});
+
+// Schedule 5-minute interval cron
+cron.schedule("* * * * * *", async () => {
+  if (isRunning5Min) return;
+  isRunning5Min = true;
+  try {
+    await runTradingLogic({ intervalMinutes: 5, intervalString: "5minute" });
+  } catch (e) {
+    console.error(e);
+  } finally {
+    isRunning5Min = false;
   }
 });
 
