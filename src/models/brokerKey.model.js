@@ -53,6 +53,14 @@ BrokerKey.initialize(
     redirectUrl: {
       type: DataTypes.TEXT,
     },
+    timeFrame: {
+      type: DataTypes.INTEGER,
+      validate: {
+        min: 1,
+        max: 5,
+      },
+      defaultValue: 3,
+    },
   },
   {
     indexes: [
